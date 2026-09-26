@@ -1,0 +1,6 @@
+torch==2.3.1
+pytorch-forecasting
+lightning
+pandas<3
+matplotlib
+jupyter

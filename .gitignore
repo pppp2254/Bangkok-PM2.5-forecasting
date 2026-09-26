@@ -1,0 +1,9 @@
+.env
+.venv/
+.venv-tft/
+node_modules/
+__pycache__/
+.ipynb_checkpoints/
+*.zip
+data/
+dashboard/.claude/

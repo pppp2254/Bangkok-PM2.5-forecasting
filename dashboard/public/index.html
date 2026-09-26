@@ -1,0 +1,649 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Bangkok PM2.5</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.css">
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.js"></script>
+<script>
+  // apply the saved or system theme before the page paints
+  try { const t = localStorage.getItem("theme"); if (t) document.documentElement.dataset.theme = t; } catch {}
+</script>
+<style>
+  :root {
+    --bg: #F2F8F3; --surface: #FFFFFF; --subtle: #F0FFF1; --border: #C2D1C5;
+    --text: #1E2620; --muted: #4D5E52; --faint: #6E8574; --grid: #DDE7DF;
+    --accent: #4D5E52; --accent-ink: #FFFFFF;
+    --s1: #4D5E52; --s2: #B07A2A; --s3: #3C7A9E; --s4: #8A5A9C; --s5: #A34848; --s6: #6E8574;
+  }
+  :root[data-theme="dark"] {
+    --bg: #282B28; --surface: #323532; --subtle: #3A3D3A; --border: #575857;
+    --text: #E5F3E6; --muted: #A4A8A5; --faint: #787B78; --grid: #404340;
+    --accent: #DAE8DC; --accent-ink: #282B28;
+    --s1: #DAE8DC; --s2: #E0B163; --s3: #7FB6D6; --s4: #C39BD3; --s5: #E08A8A; --s6: #A4A8A5;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #282B28; --surface: #323532; --subtle: #3A3D3A; --border: #575857;
+      --text: #E5F3E6; --muted: #A4A8A5; --faint: #787B78; --grid: #404340;
+      --accent: #DAE8DC; --accent-ink: #282B28;
+      --s1: #DAE8DC; --s2: #E0B163; --s3: #7FB6D6; --s4: #C39BD3; --s5: #E08A8A; --s6: #A4A8A5;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; font: 15px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; background: var(--bg); color: var(--text); }
+  header { background: var(--surface); border-bottom: 1px solid var(--border); }
+  .bar { max-width: 1120px; margin: 0 auto; padding: 14px 16px; display: flex; flex-wrap: wrap; gap: 12px 24px; align-items: center; justify-content: space-between; }
+  .brand b { font-size: 18px; display: block; }
+  .brand span { color: var(--muted); font-size: 13px; }
+  .bar .controls { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
+  nav { max-width: 1120px; margin: 0 auto; padding: 0 16px; display: flex; gap: 4px; }
+  nav button { font: inherit; border: 0; background: none; color: var(--muted); padding: 10px 14px; cursor: pointer; border-bottom: 2px solid transparent; }
+  nav button.on { color: var(--text); border-bottom-color: var(--accent); font-weight: 600; }
+  main { max-width: 1120px; margin: 0 auto; padding: 20px 16px 64px; }
+  section[data-tab] { display: none; }
+  section[data-tab].on { display: block; }
+  h2 { font-size: 16px; margin: 0 0 2px; }
+  .note { color: var(--muted); font-size: 13px; margin: 2px 0 0; }
+  .card { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 18px; margin-bottom: 16px; }
+  .row { display: flex; flex-wrap: wrap; gap: 10px 16px; align-items: center; margin: 10px 0; }
+  label.inline { font-size: 13px; color: var(--muted); display: flex; align-items: center; gap: 6px; }
+  select, input[type=date] { font: inherit; font-size: 14px; padding: 5px 8px; border: 1px solid var(--border); border-radius: 6px; background: var(--surface); color: var(--text); }
+  .seg { display: inline-flex; border: 1px solid var(--border); border-radius: 6px; overflow: hidden; }
+  .seg button { font: inherit; font-size: 13px; padding: 5px 12px; border: 0; background: var(--surface); color: var(--text); cursor: pointer; }
+  .seg button + button { border-left: 1px solid var(--border); }
+  .seg button.on { background: var(--accent); color: var(--accent-ink); }
+  .btn { font: inherit; font-size: 13px; padding: 5px 12px; border: 1px solid var(--border); border-radius: 6px; background: var(--surface); color: var(--text); cursor: pointer; text-decoration: none; }
+  .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  .grid3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; }
+  @media (max-width: 820px) { .grid2, .grid3 { grid-template-columns: 1fr; } }
+
+  /* current reading */
+  .reading { display: grid; grid-template-columns: auto 1fr; gap: 18px; align-items: center; }
+  .dial { width: 150px; height: 150px; border-radius: 50%; display: grid; place-items: center; text-align: center; color: #1E2620; }
+  .dial b { font-size: 46px; line-height: 1; display: block; }
+  .dial span { font-size: 13px; }
+  .level { font-size: 22px; font-weight: 600; margin: 0; }
+  .meta { color: var(--muted); font-size: 13px; margin: 4px 0; }
+  .banner { border: 1px solid var(--border); background: var(--subtle); border-radius: 6px; padding: 8px 12px; font-size: 13px; margin-top: 10px; }
+  .advice { width: 100%; border-collapse: collapse; font-size: 14px; }
+  .advice th { text-align: left; font-weight: 600; width: 34%; padding: 7px 8px 7px 0; vertical-align: top; }
+  .advice td { padding: 7px 0; color: var(--text); }
+  .advice tr + tr th, .advice tr + tr td { border-top: 1px solid var(--grid); }
+  .stat b { display: block; font-size: 17px; margin-top: 2px; }
+  .stat span { color: var(--muted); font-size: 13px; }
+  .strip { display: grid; grid-template-columns: repeat(24, minmax(34px, 1fr)); gap: 3px; overflow-x: auto; padding-bottom: 4px; }
+  .cell { text-align: center; font-size: 12px; }
+  .cell .h { color: var(--muted); }
+  .cell .v { border-radius: 4px; padding: 6px 0; font-weight: 600; color: #1E2620; margin: 2px 0; }
+  .cell .v.none { background: var(--subtle); color: var(--faint); font-weight: 400; }
+  .cell .a { color: var(--muted); }
+  .legend { display: flex; flex-wrap: wrap; gap: 6px 14px; font-size: 12px; color: var(--muted); }
+  .legend i { display: inline-block; width: 12px; height: 12px; border-radius: 2px; vertical-align: -2px; margin-right: 5px; }
+
+  .kpis { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; margin-bottom: 16px; }
+  @media (max-width: 820px) { .kpis { grid-template-columns: 1fr 1fr; } }
+  .kpis .card { margin: 0; }
+  .kpis b { display: block; font-size: 24px; }
+  .kpis span { color: var(--muted); font-size: 13px; }
+  .chart { position: relative; height: 300px; }
+  table.data { width: 100%; border-collapse: collapse; font-size: 14px; }
+  table.data th, table.data td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--grid); }
+  table.data th { color: var(--muted); font-weight: 600; font-size: 13px; }
+  table.data .num { text-align: right; font-variant-numeric: tabular-nums; }
+  table.data tr.best td { font-weight: 600; }
+  .toggles { display: flex; flex-wrap: wrap; gap: 6px 16px; font-size: 13px; }
+  .toggles i { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin: 0 4px 0 2px; }
+  .cal { overflow-x: auto; }
+  .cal svg { display: block; }
+  #map { height: 460px; border-radius: 6px; }
+  :root[data-theme="dark"] .leaflet-tile-pane { filter: invert(1) hue-rotate(180deg) brightness(0.9) contrast(0.9); }
+  @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .leaflet-tile-pane { filter: invert(1) hue-rotate(180deg) brightness(0.9) contrast(0.9); } }
+</style>
+</head>
+<body>
+<header>
+  <div class="bar">
+    <div class="brand"><b>Bangkok PM2.5</b><span>24-hour forecast, replayed on the 2024 test year</span></div>
+    <div class="controls">
+      <label class="inline">Station <select id="station"></select></label>
+      <div class="seg" id="standard"><button data-v="thai" class="on">Thai PCD</button><button data-v="us">US EPA</button><button data-v="who">WHO</button></div>
+      <button class="btn" id="theme" aria-label="Switch colour theme">Dark mode</button>
+    </div>
+  </div>
+  <nav id="tabs"><button data-t="now" class="on">Now</button><button data-t="accuracy">Accuracy</button><button data-t="history">History</button><button data-t="fires">Fires</button></nav>
+</header>
+
+<main>
+  <!-- NOW -->
+  <section data-tab="now" class="on">
+    <div class="row" style="margin-top: 0">
+      <label class="inline">Replay as of <input type="date" id="atDate" value="2024-01-20" min="2024-01-01" max="2024-12-30"></label>
+      <select id="atHour" aria-label="Hour"></select>
+      <button class="btn" id="prevHour">Previous hour</button>
+      <button class="btn" id="nextHour">Next hour</button>
+      <label class="inline"><input type="checkbox" id="reveal"> Show what actually happened</label>
+    </div>
+
+    <div class="grid2">
+      <div class="card">
+        <div class="reading">
+          <div class="dial" id="dial"><div><b id="value">-</b><span>µg/m³</span></div></div>
+          <div>
+            <p class="level" id="level">-</p>
+            <p class="meta" id="index"></p>
+            <p class="meta" id="where"></p>
+            <p class="meta" id="trend"></p>
+          </div>
+        </div>
+        <div class="banner" id="quality" hidden></div>
+      </div>
+      <div class="card">
+        <h2>Health advice</h2>
+        <table class="advice" id="advice"></table>
+      </div>
+    </div>
+
+    <div class="grid3">
+      <div class="card stat"><span>Cleanest time, next 24 hours</span><b id="cleanest">-</b></div>
+      <div class="card stat"><span>Next period above the standard</span><b id="nextBad">-</b></div>
+      <div class="card stat"><span>Why</span><b id="why" style="font-size: 15px; font-weight: 500">-</b></div>
+    </div>
+
+    <div class="card">
+      <h2>Next 24 hours</h2>
+      <p class="note">Forecast by LightGBM with weather and fire inputs. Shaded area: typical error range (10th to 90th percentile of 2024 errors). Hourly values shown against the active standard's bands, as IQAir and Air4Thai do; the standards themselves are 24-hour averages.</p>
+      <div class="strip" id="strip" style="margin: 12px 0"></div>
+      <div class="chart" style="height: 260px"><canvas id="nowChart"></canvas></div>
+      <div class="legend" id="bandLegend" style="margin-top: 10px"></div>
+    </div>
+  </section>
+
+  <!-- ACCURACY -->
+  <section data-tab="accuracy">
+    <div class="kpis" id="kpis"></div>
+
+    <div class="card">
+      <h2>Forecast and measured values</h2>
+      <p class="note">Each forecast was made 24 hours before the hour it predicts. Gaps are hours with no measurement.</p>
+      <div class="row">
+        <label class="inline">From <input type="date" id="from" value="2024-01-15" min="2024-01-01" max="2024-12-31"></label>
+        <label class="inline">To <input type="date" id="to" value="2024-01-28" min="2024-01-01" max="2024-12-31"></label>
+        <a class="btn" id="export">Download CSV</a>
+      </div>
+      <div class="toggles" id="toggles"></div>
+      <div class="chart" style="margin-top: 10px"><canvas id="series"></canvas></div>
+    </div>
+
+    <div class="card">
+      <div class="row" style="justify-content: space-between; margin-top: 0">
+        <div><h2>Error by model</h2><p class="note">Mean absolute error and root mean squared error, µg/m³, on hours every model covers.</p></div>
+        <div class="seg" id="season"><button data-s="all" class="on">All 2024</button><button data-s="burning">January to April</button><button data-s="rest">May to December</button></div>
+      </div>
+      <div class="grid2">
+        <table class="data" id="metrics"></table>
+        <div>
+          <div class="chart" style="height: 250px"><canvas id="ablation"></canvas></div>
+          <p class="note">Same LightGBM model with more inputs added at each step.</p>
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>Unhealthy-day warnings</h2>
+      <p class="note">A day counts as unhealthy when its mean PM2.5 is above the Thai standard of 37.5 µg/m³. The forecast for a day is the mean of its 24 hourly forecasts; the last is issued at 23:00 the day before. Days with at least 18 measured hours, all 3 stations.</p>
+      <div class="grid2" style="margin-top: 10px">
+        <table class="data" id="f1"></table>
+        <div>
+          <label class="inline">Model <select id="dayModel"></select></label>
+          <div class="chart" style="height: 250px; margin-top: 8px"><canvas id="daily"></canvas></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- HISTORY -->
+  <section data-tab="history">
+    <div class="card">
+      <h2>Daily average, 2022 to 2024</h2>
+      <p class="note" id="calNote"></p>
+      <div class="cal" id="calendar" style="margin-top: 12px"></div>
+      <div class="legend" id="calLegend" style="margin-top: 8px"></div>
+    </div>
+    <div class="grid2">
+      <div class="card">
+        <h2>Days above the standard</h2>
+        <table class="data" id="overCount" style="margin-top: 8px"></table>
+      </div>
+      <div class="card">
+        <h2>Average by hour of day</h2>
+        <div class="chart" style="height: 240px"><canvas id="hourChart"></canvas></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- FIRES -->
+  <section data-tab="fires">
+    <div class="card">
+      <h2>Fire hotspots within 500 km</h2>
+      <p class="note">NASA FIRMS VIIRS detections with nominal or high confidence on one UTC date, sized by fire radiative power. Red: upwind of Bangkok, within 45 degrees of that day's wind direction. The line shows where the wind comes from.</p>
+      <div class="row"><label class="inline">Date <input type="date" id="fireDate" value="2024-02-15" min="2022-01-01" max="2024-12-31"></label><span class="note" id="fireInfo"></span></div>
+      <div id="map"></div>
+    </div>
+  </section>
+</main>
+
+<script>
+/* standards: hourly values are shown against 24-hour bands for display */
+const STANDARDS = {
+  thai: {
+    name: "Thai PCD", limit: 37.5,
+    bands: [
+      { max: 15, label: "Very good", color: "#5AA9E6", level: 0, aqi: [0, 25] },
+      { max: 25, label: "Good", color: "#7BC47F", level: 1, aqi: [26, 50] },
+      { max: 37.5, label: "Moderate", color: "#F2D35E", level: 2, aqi: [51, 100] },
+      { max: 75, label: "Starting to affect health", color: "#F2A154", level: 3, aqi: [101, 200] },
+      { max: Infinity, label: "Affects health", color: "#E06C63", level: 4, aqi: null },
+    ],
+  },
+  us: {
+    name: "US EPA", limit: 35.4,
+    bands: [
+      { max: 9, label: "Good", color: "#7BC47F", level: 1, aqi: [0, 50] },
+      { max: 35.4, label: "Moderate", color: "#F2D35E", level: 2, aqi: [51, 100] },
+      { max: 55.4, label: "Unhealthy for sensitive groups", color: "#F2A154", level: 3, aqi: [101, 150] },
+      { max: 125.4, label: "Unhealthy", color: "#E06C63", level: 4, aqi: [151, 200] },
+      { max: 225.4, label: "Very unhealthy", color: "#A77BCA", level: 5, aqi: [201, 300] },
+      { max: Infinity, label: "Hazardous", color: "#9C5B67", level: 5, aqi: null },
+    ],
+  },
+  who: {
+    name: "WHO 2021", limit: 15,
+    bands: [
+      { max: 15, label: "Within the WHO guideline", color: "#7BC47F", level: 1 },
+      { max: 25, label: "Above guideline, within interim target 4", color: "#C9DC6A", level: 2 },
+      { max: 37.5, label: "Within interim target 3", color: "#F2D35E", level: 2 },
+      { max: 50, label: "Within interim target 2", color: "#F2A154", level: 3 },
+      { max: 75, label: "Within interim target 1", color: "#E06C63", level: 4 },
+      { max: Infinity, label: "Above all interim targets", color: "#A77BCA", level: 5 },
+    ],
+  },
+};
+const ADVICE = [
+  { general: "Good for outdoor activities.", sensitive: "Normal activities.", children: "Outdoor play is fine.", workers: "No precautions needed.", mask: "Not needed." },
+  { general: "Normal activities.", sensitive: "Normal activities.", children: "Outdoor play is fine.", workers: "No precautions needed.", mask: "Not needed." },
+  { general: "Normal activities.", sensitive: "Watch for coughing or shortness of breath. Shorten strenuous outdoor exercise.", children: "Outdoor play is fine, with rest breaks.", workers: "Take regular breaks.", mask: "Optional; sensitive groups may wear a surgical mask." },
+  { general: "Reduce long or strenuous outdoor activity.", sensitive: "Avoid strenuous outdoor activity. Keep medicine at hand.", children: "Move sports and physical education indoors.", workers: "Wear an N95 mask and take breaks indoors.", mask: "N95 recommended outdoors." },
+  { general: "Avoid outdoor exercise. Keep windows closed and run an air purifier.", sensitive: "Stay indoors. See a doctor if symptoms appear.", children: "No outdoor play.", workers: "Wear an N95 mask and limit time outdoors.", mask: "N95 for everyone outdoors." },
+  { general: "Stay indoors with windows closed and an air purifier running.", sensitive: "Stay indoors. Seek medical care if symptoms appear.", children: "Keep indoors; consider closing outdoor activities.", workers: "Postpone outdoor work where possible; N95 required.", mask: "N95 for everyone outdoors." },
+];
+const LABELS = {
+  pred_persistence: "Persistence",
+  pred_cams: "CAMS (Copernicus)",
+  pred_sarima: "SARIMA",
+  "pred_lgb PM2.5 only": "LightGBM, PM2.5 only",
+  "pred_lgb + weather": "LightGBM with weather",
+  "pred_lgb + fire": "LightGBM with weather and fire",
+  "pred_lgb + fire (all 39, overfits)": "LightGBM, all 39 fire features",
+  "pred_lgb observed weather (leaky)": "LightGBM, observed weather (leaky)",
+  pred_tft: "Temporal Fusion Transformer",
+};
+const STATION_NAMES = { stou: "Sukhothai Thammathirat Open University", mineral: "Department of Mineral Resources", highway: "Highway District" };
+const DEFAULT_ON = ["pred_persistence", "pred_cams", "pred_lgb + fire", "pred_tft"];
+const COMPASS = ["north", "north-northeast", "northeast", "east-northeast", "east", "east-southeast", "southeast", "south-southeast",
+                 "south", "south-southwest", "southwest", "west-southwest", "west", "west-northwest", "northwest", "north-northwest"];
+
+const $ = (id) => document.getElementById(id);
+const get = (url) => fetch(url).then((r) => { if (!r.ok) throw new Error(url); return r.json(); });
+const fmt = (x, d = 1) => (x == null ? "-" : Number(x).toFixed(d));
+const css = (v) => getComputedStyle(document.documentElement).getPropertyValue(v).trim();
+const label = (m) => LABELS[m] ?? m.replace(/^pred_/, "");
+const hhmm = (ts) => ts.slice(11, 16);
+const state = { standard: "thai", tab: "now", meta: null, charts: {}, map: null, fireLayer: null, cache: {} };
+const std = () => STANDARDS[state.standard];
+const band = (v) => std().bands.find((b) => v <= b.max);
+const seriesColor = (m) => css(["--s1", "--s2", "--s3", "--s4", "--s5", "--s6"][state.meta.models.indexOf(m) % 6]);
+
+function aqi(v) {
+  const s = std(), i = s.bands.findIndex((b) => v <= b.max), b = s.bands[i];
+  if (!b.aqi) return state.standard === "who" ? null : `${b.aqi === null && i ? s.bands[i - 1].aqi[1] : 0}+`;
+  const lo = i ? s.bands[i - 1].max : 0;
+  return Math.round(b.aqi[0] + ((v - lo) / (b.max - lo)) * (b.aqi[1] - b.aqi[0]));
+}
+
+function chartDefaults() {
+  Chart.defaults.color = css("--muted");
+  Chart.defaults.borderColor = css("--grid");
+  Chart.defaults.font.family = getComputedStyle(document.body).fontFamily;
+  Chart.defaults.animation = false;
+  Chart.defaults.plugins.legend.labels.boxWidth = 12;
+}
+function draw(id, config) {
+  state.charts[id]?.destroy();
+  state.charts[id] = new Chart($(id), config);
+}
+
+/* setup */
+async function init() {
+  state.meta = await get("/api/meta");
+  chartDefaults();
+  $("station").innerHTML = state.meta.stations.map((s) => `<option value="${s}" ${s === "stou" ? "selected" : ""}>${STATION_NAMES[s] ?? s}</option>`).join("");
+  $("atHour").innerHTML = Array.from({ length: 24 }, (_, h) => `<option value="${h}" ${h === 6 ? "selected" : ""}>${String(h).padStart(2, "0")}:00</option>`).join("");
+  $("toggles").innerHTML = state.meta.models.map((m) =>
+    `<label><input type="checkbox" value="${m}" ${DEFAULT_ON.includes(m) ? "checked" : ""}><i style="background:${seriesColor(m)}"></i>${label(m)}</label>`).join("");
+  $("dayModel").innerHTML = state.meta.models.map((m) => `<option value="${m}" ${m === "pred_lgb + fire" ? "selected" : ""}>${label(m)}</option>`).join("");
+
+  $("tabs").onclick = (e) => e.target.dataset.t && showTab(e.target.dataset.t);
+  $("standard").onclick = (e) => {
+    if (!e.target.dataset.v) return;
+    state.standard = e.target.dataset.v;
+    [...$("standard").children].forEach((b) => b.classList.toggle("on", b === e.target));
+    render();
+  };
+  $("theme").onclick = () => {
+    const dark = currentTheme() !== "dark";
+    document.documentElement.dataset.theme = dark ? "dark" : "light";
+    try { localStorage.setItem("theme", document.documentElement.dataset.theme); } catch {}
+    themeChanged();
+  };
+  matchMedia("(prefers-color-scheme: dark)").addEventListener("change", themeChanged);
+  $("station").onchange = render;
+  for (const id of ["atDate", "atHour", "reveal"]) $(id).onchange = renderNow;
+  $("prevHour").onclick = () => stepHour(-1);
+  $("nextHour").onclick = () => stepHour(1);
+  for (const id of ["from", "to"]) $(id).onchange = renderSeries;
+  $("toggles").onchange = renderSeries;
+  $("dayModel").onchange = renderDaily;
+  $("season").onclick = (e) => {
+    if (!e.target.dataset.s) return;
+    [...$("season").children].forEach((b) => b.classList.toggle("on", b === e.target));
+    renderMetrics(e.target.dataset.s);
+  };
+  $("fireDate").onchange = renderFires;
+  updateThemeButton();
+  render();
+}
+
+function currentTheme() {
+  return document.documentElement.dataset.theme ?? (matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
+}
+function updateThemeButton() { $("theme").textContent = currentTheme() === "dark" ? "Light mode" : "Dark mode"; }
+function themeChanged() {
+  updateThemeButton();
+  chartDefaults();
+  $("toggles").querySelectorAll("i").forEach((i, k) => (i.style.background = seriesColor(state.meta.models[k])));
+  if (state.map) setTiles();
+  render();
+}
+
+function showTab(t) {
+  state.tab = t;
+  [...$("tabs").children].forEach((b) => b.classList.toggle("on", b.dataset.t === t));
+  document.querySelectorAll("section[data-tab]").forEach((s) => s.classList.toggle("on", s.dataset.tab === t));
+  render();
+}
+
+function render() {
+  if (state.tab === "now") renderNow();
+  if (state.tab === "accuracy") { renderKpis(); renderSeries(); renderMetrics($("season").querySelector(".on").dataset.s); renderDaily(); }
+  if (state.tab === "history") renderHistory();
+  if (state.tab === "fires") renderFires();
+}
+
+function stepHour(d) {
+  const t = new Date(`${$("atDate").value}T${String($("atHour").value).padStart(2, "0")}:00:00Z`);
+  t.setUTCHours(t.getUTCHours() + d);
+  const iso = t.toISOString();
+  if (iso.slice(0, 10) < $("atDate").min || iso.slice(0, 10) > $("atDate").max) return;
+  $("atDate").value = iso.slice(0, 10);
+  $("atHour").value = String(t.getUTCHours());
+  renderNow();
+}
+
+/* now */
+async function renderNow() {
+  const station = $("station").value;
+  const at = `${$("atDate").value} ${String($("atHour").value).padStart(2, "0")}:00`;
+  const d = await get(`/api/now?station=${station}&at=${encodeURIComponent(at)}`);
+  const c = d.current ?? {};
+  const value = c.pm25_raw ?? c.pm25;
+  const s = std();
+
+  $("where").textContent = `${STATION_NAMES[station] ?? station}, Bangkok. ${at} local time.`;
+  const q = $("quality");
+  if (c.pm25_raw == null && c.pm25 != null) { q.hidden = false; q.textContent = "No measurement this hour. Showing an estimate filled from nearby hours and stations; treat it as approximate."; }
+  else if (value == null) { q.hidden = false; q.textContent = "No measurement or estimate for this hour (station offline). Advice below is based on the forecast only."; }
+  else q.hidden = true;
+
+  const shown = value ?? d.next.find((r) => r.forecast != null)?.forecast;
+  if (shown == null) { $("value").textContent = "-"; $("level").textContent = "No data"; return; }
+  const b = band(shown), idx = aqi(shown);
+  $("value").textContent = Math.round(shown);
+  $("dial").style.background = b.color;
+  $("level").textContent = b.label;
+  $("index").textContent = state.standard === "who"
+    ? `${fmt(shown / 15, 1)} times the WHO 24-hour guideline of 15 µg/m³`
+    : `AQI ${idx} (${s.name})`;
+  const prev = c.pm25_3h_ago;
+  $("trend").textContent = prev == null || value == null ? "" :
+    Math.abs(value - prev) < 1 ? "About the same as 3 hours ago." :
+    `${value > prev ? "Up" : "Down"} ${fmt(Math.abs(value - prev))} µg/m³ from 3 hours ago.`;
+
+  const a = ADVICE[b.level];
+  $("advice").innerHTML = [["General public", a.general], ["Sensitive groups", a.sensitive], ["Children", a.children],
+    ["Outdoor workers", a.workers], ["Mask", a.mask]].map(([k, v]) => `<tr><th>${k}</th><td>${v}</td></tr>`).join("");
+
+  // cleanest 3-hour window and next run above the standard, from the forecast
+  const f = d.next.map((r) => r.forecast);
+  let best = null;
+  for (let i = 0; i + 3 <= f.length; i++) {
+    const w = f.slice(i, i + 3);
+    if (w.some((x) => x == null)) continue;
+    const m = w.reduce((p, x) => p + x, 0) / 3;
+    if (!best || m < best.m) best = { i, m };
+  }
+  const when = (ts) => `${hhmm(ts)}${ts.slice(0, 10) === $("atDate").value ? "" : " tomorrow"}`;
+  const hourAfter = (ts) => { const t = new Date(ts.replace(" ", "T") + ":00Z"); t.setUTCHours(t.getUTCHours() + 1); return t.toISOString().slice(0, 16).replace("T", " "); };
+  $("cleanest").textContent = best ? `${when(d.next[best.i].ts)} to ${when(hourAfter(d.next[best.i + 2].ts))}, around ${Math.round(best.m)} µg/m³` : "Not enough forecast data";
+  const start = f.findIndex((x) => x != null && x > s.limit);
+  if (start < 0) $("nextBad").textContent = `None expected (limit ${s.limit} µg/m³)`;
+  else {
+    let end = start;
+    while (end + 1 < f.length && f[end + 1] != null && f[end + 1] > s.limit) end++;
+    const runsToEnd = end === f.length - 1;
+    $("nextBad").textContent = start === 0 && runsToEnd ? "All of the next 24 hours"
+      : runsToEnd ? `From ${when(d.next[start].ts)}, lasting past the next 24 hours`
+      : `${when(d.next[start].ts)} to ${when(d.next[end + 1].ts)}`;
+  }
+  const w = d.wind;
+  const dir = w?.from_deg == null ? null : COMPASS[Math.round(w.from_deg / 22.5) % 16];
+  $("why").textContent = [
+    dir ? `Wind from the ${dir} at ${fmt(w.speed)} km/h over the next 24 hours${w.speed < 8 ? ", too light to clear the air" : ""}.` : "",
+    c.fire_upwind_48h != null ? `Upwind fire activity in the last 48 hours: ${Math.round(c.fire_upwind_48h)} weighted detections.` : "",
+  ].join(" ");
+
+  // strip and chart
+  const reveal = $("reveal").checked;
+  $("strip").innerHTML = d.next.map((r) => {
+    const v = r.forecast;
+    const cls = v == null ? "v none" : "v";
+    const bg = v == null ? "" : `style="background:${band(v).color}"`;
+    return `<div class="cell"><div class="h">${hhmm(r.ts)}</div><div class="${cls}" ${bg}>${v == null ? "n/a" : Math.round(v)}</div>${reveal ? `<div class="a">${r.actual == null ? "n/a" : Math.round(r.actual)}</div>` : ""}</div>`;
+  }).join("") ;
+  const labels = d.next.map((r) => hhmm(r.ts));
+  const ink = css("--text"), accent = css("--s1");
+  draw("nowChart", {
+    type: "line",
+    data: { labels, datasets: [
+      { label: "Error range", data: d.next.map((r) => r.hi), borderWidth: 0, pointRadius: 0, backgroundColor: css("--grid"), fill: "+1", order: 10 }, // drawn first, under the lines
+      { label: "Error range low", data: d.next.map((r) => r.lo), borderWidth: 0, pointRadius: 0, fill: false, order: 10 },
+      { label: "Forecast", data: f, borderColor: accent, borderWidth: 2, pointRadius: 0 },
+      ...(reveal ? [{ label: "Measured", data: d.next.map((r) => r.actual), borderColor: css("--s2"), borderWidth: 2, pointRadius: 0 }] : []),
+      { label: `${s.name} limit, ${s.limit} µg/m³`, data: labels.map(() => s.limit), borderColor: css("--faint"), borderDash: [5, 4], borderWidth: 1, pointRadius: 0 },
+    ] },
+    options: { maintainAspectRatio: false, interaction: { mode: "index", intersect: false },
+      plugins: { legend: { labels: { filter: (i) => i.text !== "Error range low" } } },
+      scales: { y: { beginAtZero: true, title: { display: true, text: "PM2.5 (µg/m³)" } } } },
+  });
+  $("bandLegend").innerHTML = s.bands.map((x, i) => {
+    const lo = i ? s.bands[i - 1].max : 0;
+    return `<span><i style="background:${x.color}"></i>${x.label} (${x.max === Infinity ? `above ${lo}` : `${lo} to ${x.max}`})</span>`;
+  }).join("");
+}
+
+/* accuracy */
+async function renderKpis() {
+  const [m, d] = await Promise.all([get("/api/metrics?season=all"), get("/api/daily")]);
+  const honest = m.filter((r) => !r.model.includes("leaky"));
+  const best = honest[0], persist = m.find((r) => r.model === "pred_persistence");
+  const bestF1 = d.scores.filter((s) => !s.model.includes("leaky")).sort((a, b) => b.f1 - a.f1)[0];
+  $("kpis").innerHTML = [
+    [`${fmt(best.mae, 2)} µg/m³`, `Lowest mean absolute error (${label(best.model)})`],
+    [`${fmt((1 - best.mae / persist.mae) * 100, 0)}%`, "Lower error than persistence"],
+    [fmt(bestF1.f1, 2), `Best unhealthy-day F1 (${label(bestF1.model)})`],
+    [Number(best.n).toLocaleString("en-US"), "Test hours scored by every model"],
+  ].map(([v, t]) => `<div class="card"><b>${v}</b><span>${t}</span></div>`).join("");
+}
+
+async function renderSeries() {
+  const station = $("station").value, from = $("from").value, to = $("to").value;
+  $("export").href = `/api/export?station=${station}&from=${from}&to=${to}`;
+  const rows = await get(`/api/series?station=${station}&from=${from}&to=${to}`);
+  const on = [...$("toggles").querySelectorAll("input:checked")].map((i) => i.value);
+  draw("series", {
+    type: "line",
+    data: { labels: rows.map((r) => r.ts), datasets: [
+      { label: "Measured", data: rows.map((r) => r.y), borderColor: css("--text"), borderWidth: 2, pointRadius: 0 },
+      ...on.map((m) => ({ label: label(m), data: rows.map((r) => r[m]), borderColor: seriesColor(m), borderWidth: 1.3, pointRadius: 0 })),
+      { label: "Thai limit, 37.5 µg/m³", data: rows.map(() => 37.5), borderColor: css("--faint"), borderDash: [5, 4], borderWidth: 1, pointRadius: 0 },
+    ] },
+    options: { maintainAspectRatio: false, interaction: { mode: "index", intersect: false },
+      scales: { x: { ticks: { maxTicksLimit: 8, callback(v) { return this.getLabelForValue(v).slice(5, 16); } } },
+                y: { beginAtZero: true, title: { display: true, text: "PM2.5 (µg/m³)" } } } },
+  });
+}
+
+async function renderMetrics(season) {
+  const m = await get(`/api/metrics?season=${season}`);
+  const best = m.find((r) => !r.model.includes("leaky")).model;
+  $("metrics").innerHTML = `<tr><th>Model</th><th class="num">MAE</th><th class="num">RMSE</th></tr>` +
+    m.map((r) => `<tr class="${r.model === best ? "best" : ""}"><td>${label(r.model)}</td><td class="num">${fmt(r.mae, 2)}</td><td class="num">${fmt(r.rmse, 2)}</td></tr>`).join("");
+  const steps = ["pred_lgb PM2.5 only", "pred_lgb + weather", "pred_lgb + fire"].map((k) => m.find((r) => r.model === k));
+  const names = ["PM2.5 history", "Add weather", "Add fire"];
+  draw("ablation", {
+    type: "bar",
+    data: { labels: steps.map((r, i) => [names[i], i ? `${fmt(r.mae, 2)} (${fmt((r.mae / steps[i - 1].mae - 1) * 100, 0)}%)` : fmt(r.mae, 2)]),
+      datasets: [{ data: steps.map((r) => r.mae), backgroundColor: css("--s1"), maxBarThickness: 64 }] },
+    options: { maintainAspectRatio: false, plugins: { legend: { display: false } },
+      scales: { y: { beginAtZero: true, title: { display: true, text: "MAE (µg/m³)" } } } },
+  });
+}
+
+async function renderDaily() {
+  const station = $("station").value;
+  const d = await get(`/api/daily?station=${station}`);
+  const best = [...d.scores].filter((s) => !s.model.includes("leaky")).sort((a, b) => b.f1 - a.f1)[0].model;
+  $("f1").innerHTML = `<tr><th>Model</th><th class="num">Precision</th><th class="num">Recall</th><th class="num">F1</th></tr>` +
+    d.scores.map((s) => `<tr class="${s.model === best ? "best" : ""}"><td>${label(s.model)}</td><td class="num">${fmt(s.precision, 2)}</td><td class="num">${fmt(s.recall, 2)}</td><td class="num">${fmt(s.f1, 2)}</td></tr>`).join("");
+  const m = $("dayModel").value;
+  draw("daily", {
+    data: { labels: d.days.map((r) => r.date), datasets: [
+      { type: "bar", label: "Measured daily mean", data: d.days.map((r) => r.y), backgroundColor: d.days.map((r) => (r.y > 37.5 ? "#E06C63" : css("--border"))) },
+      { type: "line", label: label(m), data: d.days.map((r) => r[m]), borderColor: seriesColor(m), borderWidth: 1.3, pointRadius: 0 },
+    ] },
+    options: { maintainAspectRatio: false,
+      scales: { x: { ticks: { maxTicksLimit: 6 } }, y: { beginAtZero: true, title: { display: true, text: "PM2.5 (µg/m³)" } } } },
+  });
+}
+
+/* history */
+async function renderHistory() {
+  const station = $("station").value;
+  const key = `history:${station}`;
+  const h = state.cache[key] ?? (state.cache[key] = await get(`/api/history?station=${station}`));
+  const s = std();
+  const byDate = new Map(h.days.map((d) => [d.date, d.mean]));
+  const size = 13, gap = 2, left = 40, top = 18;
+  let svg = "";
+  const years = [2022, 2023, 2024];
+  years.forEach((y, yi) => {
+    const oy = yi * (7 * (size + gap) + top + 12);
+    svg += `<text x="0" y="${oy + top + 3 * (size + gap) + 10}" font-size="12" fill="${css("--muted")}">${y}</text>`;
+    const first = new Date(Date.UTC(y, 0, 1));
+    for (let d = new Date(first); d.getUTCFullYear() === y; d.setUTCDate(d.getUTCDate() + 1)) {
+      const doy = Math.round((d - first) / 864e5);
+      const week = Math.floor((doy + first.getUTCDay()) / 7), dow = d.getUTCDay();
+      const iso = d.toISOString().slice(0, 10), v = byDate.get(iso);
+      const fill = v == null ? css("--subtle") : band(v).color;
+      svg += `<rect x="${left + week * (size + gap)}" y="${oy + top + dow * (size + gap)}" width="${size}" height="${size}" rx="2" fill="${fill}" stroke="${css("--grid")}" stroke-width="${v == null ? 1 : 0}"><title>${iso}: ${v == null ? "no data" : `${fmt(v)} µg/m³, ${band(v).label}`}</title></rect>`;
+      if (d.getUTCDate() === 1 && yi === 0) svg += `<text x="${left + week * (size + gap)}" y="${oy + 12}" font-size="11" fill="${css("--muted")}">${d.toLocaleString("en-US", { month: "short", timeZone: "UTC" })}</text>`;
+    }
+  });
+  const height = years.length * (7 * (size + gap) + top + 12);
+  $("calendar").innerHTML = `<svg width="${left + 54 * (size + gap)}" height="${height}" role="img" aria-label="Daily PM2.5 calendar">${svg}</svg>`;
+  $("calNote").textContent = `Measured daily mean at ${STATION_NAMES[station] ?? station}, coloured by the ${s.name} bands. Grey outline: fewer than 18 measured hours that day.`;
+  $("calLegend").innerHTML = s.bands.map((x) => `<span><i style="background:${x.color}"></i>${x.label}</span>`).join("") + `<span><i style="background:${css("--subtle")}; outline: 1px solid ${css("--grid")}"></i>No data</span>`;
+
+  const rows = years.map((y) => {
+    const days = h.days.filter((d) => d.date.startsWith(String(y)));
+    const over = days.filter((d) => d.mean > s.limit).length;
+    return `<tr><td>${y}</td><td class="num">${over}</td><td class="num">${days.length}</td><td class="num">${days.length ? fmt((over / days.length) * 100, 0) : "-"}%</td></tr>`;
+  });
+  $("overCount").innerHTML = `<tr><th>Year</th><th class="num">Days above ${s.limit} µg/m³</th><th class="num">Days measured</th><th class="num">Share</th></tr>${rows.join("")}`;
+
+  draw("hourChart", {
+    type: "line",
+    data: { labels: h.hours.map((r) => `${String(r.hour).padStart(2, "0")}:00`), datasets: [
+      { label: "January to April", data: h.hours.map((r) => r.burning), borderColor: css("--s2"), borderWidth: 2, pointRadius: 0 },
+      { label: "May to December", data: h.hours.map((r) => r.rest), borderColor: css("--s1"), borderWidth: 2, pointRadius: 0 },
+    ] },
+    options: { maintainAspectRatio: false, scales: { x: { ticks: { maxTicksLimit: 8 } }, y: { beginAtZero: true, title: { display: true, text: "PM2.5 (µg/m³)" } } } },
+  });
+}
+
+/* fires */
+// OpenStreetMap tiles need no API key; dark mode darkens them with a CSS filter instead of a second provider
+function setTiles() {
+  if (!state.tiles)
+    state.tiles = L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png",
+      { attribution: "&copy; OpenStreetMap contributors", maxZoom: 12 }).addTo(state.map);
+}
+function bearing(lat, lon) {
+  const r = Math.PI / 180, a = 13.7563 * r, b = lat * r, dl = (lon - 100.5018) * r;
+  return (Math.atan2(Math.sin(dl) * Math.cos(b), Math.cos(a) * Math.sin(b) - Math.sin(a) * Math.cos(b) * Math.cos(dl)) / r + 360) % 360;
+}
+async function renderFires() {
+  if (!state.map) {
+    state.map = L.map("map").setView([13.7563, 100.5018], 6);
+    setTiles();
+  }
+  setTimeout(() => state.map.invalidateSize(), 0); // the tab was hidden when the map was created
+  const { wind, fires } = await get(`/api/fires?date=${$("fireDate").value}`);
+  state.fireLayer?.remove();
+  state.fireLayer = L.layerGroup().addTo(state.map);
+  L.circle([13.7563, 100.5018], { radius: 500000, color: css("--faint"), weight: 1, fill: false, dashArray: "4 4" }).addTo(state.fireLayer);
+  L.circleMarker([13.7563, 100.5018], { radius: 6, color: css("--text"), weight: 2, fillColor: css("--surface"), fillOpacity: 1 }).bindTooltip("Bangkok").addTo(state.fireLayer);
+  if (!state.meta.fires) { $("fireInfo").textContent = "Fire data not found. Unzip pm25-data-raw.zip into the project folder."; return; }
+  let upwind = 0;
+  for (const f of fires) {
+    const diff = wind?.from_deg == null ? 180 : Math.abs(((bearing(f.lat, f.lon) - wind.from_deg + 540) % 360) - 180);
+    const up = diff <= 45;
+    upwind += up;
+    L.circleMarker([f.lat, f.lon], { radius: Math.min(2 + Math.sqrt(f.frp), 8), weight: 0, fillOpacity: 0.65, fillColor: up ? "#D9453D" : "#E0A030" })
+      .bindTooltip(`${fmt(f.dist_km, 0)} km from Bangkok, ${f.frp} MW, ${f.acq_time.slice(0, 2)}:${f.acq_time.slice(2)} UTC`).addTo(state.fireLayer);
+  }
+  if (wind?.from_deg != null) {
+    const r = Math.PI / 180, len = 2.5;
+    L.polyline([[13.7563 + Math.cos(wind.from_deg * r) * len, 100.5018 + Math.sin(wind.from_deg * r) * len], [13.7563, 100.5018]],
+      { color: css("--s3"), weight: 3 }).addTo(state.fireLayer);
+  }
+  const dir = wind?.from_deg == null ? null : COMPASS[Math.round(wind.from_deg / 22.5) % 16];
+  $("fireInfo").textContent = `${fires.length.toLocaleString("en-US")} detections, ${upwind.toLocaleString("en-US")} upwind.${dir ? ` Wind from the ${dir} at ${fmt(wind.speed)} km/h.` : ""}`;
+}
+
+init();
+</script>
+</body>
+</html>

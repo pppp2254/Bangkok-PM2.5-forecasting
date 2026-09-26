@@ -1,0 +1,16 @@
+{
+  "name": "dashboard",
+  "module": "index.ts",
+  "type": "module",
+  "private": true,
+  "devDependencies": {
+    "@types/bun": "latest"
+  },
+  "peerDependencies": {
+    "typescript": "^5"
+  },
+  "dependencies": {
+    "@duckdb/node-api": "^1.5.5-r.5",
+    "elysia": "^1.4.30"
+  }
+}
