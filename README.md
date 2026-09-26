@@ -82,3 +82,14 @@ Needs `data/clean/` (and `data/raw/firms/` for the fire map). Details in `dashbo
 | LightGBM, PM2.5 only | 5.67 | 7.72 | 0.65 |
 | Persistence | 5.89 | 7.60 | 0.74 |
 | CAMS | 12.93 | 14.59 | 0.53 |
+
+
+Member
+1.6710503780 จักรภัทร ชัยดิลกลาภ
+explore.ipynb, report and edit the video
+2.6710504077 ปัญญวัฒน์ เชื้อวัชรินทร์
+Bun + Elysia API with DuckDB reading the CSVs directly. Pages: station and date picker, results table, ablation chart, unhealthy-day view, map of fires upwind of Bangkok.
+3.6710504310 รัชพล สนิทวงษ์
+tft.ipynb on Colab GPU, download the updated test_predictions.csv and tft_variable_importance.png.write the TFT slides and the Colab demo
+
+
