@@ -33,6 +33,7 @@
     }
   }
   * { box-sizing: border-box; }
+  [hidden] { display: none !important; }
   body { margin: 0; font: 15px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; background: var(--bg); color: var(--text); }
   header { background: var(--surface); border-bottom: 1px solid var(--border); }
   .bar { max-width: 1120px; margin: 0 auto; padding: 14px 16px; display: flex; flex-wrap: wrap; gap: 12px 24px; align-items: center; justify-content: space-between; }
@@ -99,6 +100,7 @@
   .cal { overflow-x: auto; }
   .cal svg { display: block; }
   #map { height: 460px; border-radius: 6px; }
+  #toast { position: fixed; left: 50%; bottom: 20px; transform: translateX(-50%); background: var(--text); color: var(--bg); padding: 8px 14px; border-radius: 6px; font-size: 13px; z-index: 1000; max-width: calc(100% - 32px); }
   :root[data-theme="dark"] .leaflet-tile-pane { filter: invert(1) hue-rotate(180deg) brightness(0.9) contrast(0.9); }
   @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .leaflet-tile-pane { filter: invert(1) hue-rotate(180deg) brightness(0.9) contrast(0.9); } }
 </style>
@@ -106,7 +108,7 @@
 <body>
 <header>
   <div class="bar">
-    <div class="brand"><b>Bangkok PM2.5</b><span>24-hour forecast, replayed on the 2024 test year</span></div>
+    <div class="brand"><b>Bangkok PM2.5</b><span>24-hour forecast for 3 Air4Thai stations, live and backtested on 2024</span></div>
     <div class="controls">
       <label class="inline">Station <select id="station"></select></label>
       <div class="seg" id="standard"><button data-v="thai" class="on">Thai PCD</button><button data-v="us">US EPA</button><button data-v="who">WHO</button></div>
@@ -120,11 +122,22 @@
   <!-- NOW -->
   <section data-tab="now" class="on">
     <div class="row" style="margin-top: 0">
-      <label class="inline">Replay as of <input type="date" id="atDate" value="2024-01-20" min="2024-01-01" max="2024-12-30"></label>
+      <div class="seg" id="mode"><button data-m="live" class="on">Live forecast</button><button data-m="backtest">Backtest 2024</button></div>
+      <span id="liveControls" class="row" style="margin: 0">
+        <label class="inline">Forecast from <input type="date" id="liveDate" min="2022-01-08"></label>
+        <select id="liveHour" aria-label="Hour"></select>
+        <select id="saved" aria-label="Saved forecasts"></select>
+        <button class="btn" id="latest">Latest</button>
+        <button class="btn" id="refresh">Refresh</button>
+      </span>
+      <label class="inline"><input type="checkbox" id="reveal"> Show what actually happened</label>
+    </div>
+    <p class="note" id="liveInfo" style="margin: -2px 0 10px"></p>
+    <div class="row" id="backtestControls" hidden>
+      <label class="inline">Replay as of (2024 only) <input type="date" id="atDate" value="2024-01-20" min="2024-01-01" max="2024-12-30"></label>
       <select id="atHour" aria-label="Hour"></select>
       <button class="btn" id="prevHour">Previous hour</button>
       <button class="btn" id="nextHour">Next hour</button>
-      <label class="inline"><input type="checkbox" id="reveal"> Show what actually happened</label>
     </div>
 
     <div class="grid2">
@@ -155,6 +168,7 @@
     <div class="card">
       <h2>Next 24 hours</h2>
       <p class="note">Forecast by LightGBM with weather and fire inputs. Shaded area: typical error range (10th to 90th percentile of 2024 errors). Hourly values shown against the active standard's bands, as IQAir and Air4Thai do; the standards themselves are 24-hour averages.</p>
+      <p class="note" id="liveNote" hidden>On very clean days the model reads a few µg/m³ high: it rarely saw values below 6 µg/m³ in training, so its forecasts do not go much below 9. The band and advice are unaffected.</p>
       <div class="strip" id="strip" style="margin: 12px 0"></div>
       <div class="chart" style="height: 260px"><canvas id="nowChart"></canvas></div>
       <div class="legend" id="bandLegend" style="margin-top: 10px"></div>
@@ -167,7 +181,7 @@
 
     <div class="card">
       <h2>Forecast and measured values</h2>
-      <p class="note">Each forecast was made 24 hours before the hour it predicts. Gaps are hours with no measurement.</p>
+      <p class="note">Each forecast was made 24 hours before the hour it predicts. Gaps are hours with no measurement. Forecasts exist for 2024 only, the test year the models never saw in training.</p>
       <div class="row">
         <label class="inline">From <input type="date" id="from" value="2024-01-15" min="2024-01-01" max="2024-12-31"></label>
         <label class="inline">To <input type="date" id="to" value="2024-01-28" min="2024-01-01" max="2024-12-31"></label>
@@ -229,11 +243,12 @@
     <div class="card">
       <h2>Fire hotspots within 500 km</h2>
       <p class="note">NASA FIRMS VIIRS detections with nominal or high confidence on one UTC date, sized by fire radiative power. Red: upwind of Bangkok, within 45 degrees of that day's wind direction. The line shows where the wind comes from.</p>
-      <div class="row"><label class="inline">Date <input type="date" id="fireDate" value="2024-02-15" min="2022-01-01" max="2024-12-31"></label><span class="note" id="fireInfo"></span></div>
+      <div class="row"><label class="inline">Date (2022 to 2024) <input type="date" id="fireDate" value="2024-02-15" min="2022-01-01" max="2024-12-31"></label><span class="note" id="fireInfo"></span></div>
       <div id="map"></div>
     </div>
   </section>
 </main>
+<div id="toast" role="status" hidden></div>
 
 <script>
 /* standards: hourly values are shown against 24-hour bands for display */
@@ -301,10 +316,12 @@ const fmt = (x, d = 1) => (x == null ? "-" : Number(x).toFixed(d));
 const css = (v) => getComputedStyle(document.documentElement).getPropertyValue(v).trim();
 const label = (m) => LABELS[m] ?? m.replace(/^pred_/, "");
 const hhmm = (ts) => ts.slice(11, 16);
-const state = { standard: "thai", tab: "now", meta: null, charts: {}, map: null, fireLayer: null, cache: {} };
+const state = { mode: "live", liveAt: null, standard: "thai", tab: "now", meta: null, charts: {}, map: null, fireLayer: null, cache: {} };
 const std = () => STANDARDS[state.standard];
 const band = (v) => std().bands.find((b) => v <= b.max);
-const seriesColor = (m) => css(["--s1", "--s2", "--s3", "--s4", "--s5", "--s6"][state.meta.models.indexOf(m) % 6]);
+// one mid-tone colour per model, readable on both themes and distinct from "Measured" (text colour)
+const MODEL_COLORS = ["#5B8C64", "#C98A2B", "#3C7FB0", "#9A62B0", "#C0504D", "#2E9A9A", "#8C7A5B", "#7A8B99", "#D06A9A"];
+const seriesColor = (m) => MODEL_COLORS[state.meta.models.indexOf(m) % MODEL_COLORS.length];
 
 function aqi(v) {
   const s = std(), i = s.bands.findIndex((b) => v <= b.max), b = s.bands[i];
@@ -350,7 +367,47 @@ async function init() {
   };
   matchMedia("(prefers-color-scheme: dark)").addEventListener("change", themeChanged);
   $("station").onchange = render;
+  // Chrome's date picker still offers years outside min/max, so snap any pick back into range
+  for (const id of ["atDate", "from", "to", "fireDate"]) $(id).addEventListener("change", () => clampDate($(id)), true);
   for (const id of ["atDate", "atHour", "reveal"]) $(id).onchange = renderNow;
+  $("mode").onclick = (e) => {
+    if (!e.target.dataset.m) return;
+    state.mode = e.target.dataset.m;
+    [...$("mode").children].forEach((b) => b.classList.toggle("on", b === e.target));
+    renderNow();
+  };
+  $("liveHour").innerHTML = $("atHour").innerHTML;
+  $("liveDate").max = new Date(Date.now() + 7 * 3600e3).toISOString().slice(0, 10); // today in Bangkok
+  const pickLive = () => {
+    const at = `${$("liveDate").value} ${String($("liveHour").value).padStart(2, "0")}:00`;
+    const nowBkk = new Date(Date.now() + 7 * 3600e3).toISOString().slice(0, 13).replace("T", " ") + ":00";
+    state.liveAt = at < nowBkk ? at : null;
+    if (!state.liveAt) {
+      const t = $("toast");
+      t.textContent = "That hour has not happened yet. Showing the latest forecast, which covers the next 24 hours.";
+      t.hidden = false;
+      clearTimeout(t.timer);
+      t.timer = setTimeout(() => (t.hidden = true), 4000);
+    }
+    renderNow();
+  };
+  $("liveDate").addEventListener("change", () => clampDate($("liveDate")), true);
+  $("liveDate").onchange = pickLive;
+  $("liveHour").onchange = pickLive;
+  $("latest").onclick = () => { state.liveAt = null; renderNow(); };
+  $("saved").onchange = () => { if ($("saved").value) { state.liveAt = $("saved").value; renderNow(); } };
+  loadSaved();
+  $("refresh").onclick = async () => {
+    state.liveAt = null;
+    const b = $("refresh");
+    b.disabled = true;
+    b.textContent = "Fetching latest data...";
+    const r = await fetch("/api/live/refresh", { method: "POST" }).then((x) => x.json()).catch(() => ({ ok: false, log: "Server not reachable" }));
+    b.disabled = false;
+    b.textContent = "Refresh";
+    if (!r.ok) $("liveInfo").textContent = `Refresh failed: ${r.log}`;
+    else renderNow();
+  };
   $("prevHour").onclick = () => stepHour(-1);
   $("nextHour").onclick = () => stepHour(1);
   for (const id of ["from", "to"]) $(id).onchange = renderSeries;
@@ -402,11 +459,50 @@ function stepHour(d) {
   renderNow();
 }
 
+async function loadSaved() {
+  const list = await get("/api/live/saved").catch(() => []);
+  $("saved").innerHTML = `<option value="">Saved forecasts (${list.length})</option>` + list.map((a) => `<option>${a}</option>`).join("");
+  $("saved").value = list.includes(state.liveAt) ? state.liveAt : "";
+}
+
+function clampDate(el) {
+  const v = el.value;
+  if (!v || (v >= el.min && v <= el.max)) return;
+  el.value = v < el.min ? el.min : el.max;
+  const t = $("toast");
+  t.textContent = `Data covers ${el.min} to ${el.max}, so the date was moved to ${el.value}.`;
+  t.hidden = false;
+  clearTimeout(t.timer);
+  t.timer = setTimeout(() => (t.hidden = true), 4000);
+}
+
 /* now */
 async function renderNow() {
   const station = $("station").value;
-  const at = `${$("atDate").value} ${String($("atHour").value).padStart(2, "0")}:00`;
-  const d = await get(`/api/now?station=${station}&at=${encodeURIComponent(at)}`);
+  const live = state.mode === "live";
+  $("liveControls").hidden = !live;
+  $("backtestControls").hidden = live;
+  $("liveNote").hidden = !live;
+  let d;
+  $("liveInfo").hidden = !live;
+  if (live) {
+    const at = state.liveAt;
+    if (at) $("liveInfo").textContent = `Fetching the data for ${at} and running the model, about 15 seconds...`;
+    const r = await fetch(`/api/live?station=${station}${at ? `&at=${encodeURIComponent(at)}` : ""}`);
+    if (!r.ok) { $("liveInfo").textContent = (await r.json().catch(() => ({}))).error ?? "No live forecast yet. Press Refresh."; return; }
+    if (at !== state.liveAt) return; // a newer pick arrived while this one was loading
+    d = await r.json();
+    const made = new Date(d.generated_at).toLocaleString("en-GB", { dateStyle: "medium", timeStyle: "short" });
+    $("liveInfo").textContent = (at ? `Forecast from ${d.at}, built from the data available then.` : `Latest reading ${d.at}. Forecast made ${made}.`)
+      + (d.notes.length ? ` ${d.notes.join(" ")}` : "");
+    if (at) loadSaved(); // a newly computed date is now saved too
+    $("liveDate").value = d.at.slice(0, 10);
+    $("liveHour").value = String(Number(d.at.slice(11, 13)));
+  } else {
+    const at = `${$("atDate").value} ${String($("atHour").value).padStart(2, "0")}:00`;
+    d = await get(`/api/now?station=${station}&at=${encodeURIComponent(at)}`);
+  }
+  const at = d.at;
   const c = d.current ?? {};
   const value = c.pm25_raw ?? c.pm25;
   const s = std();
@@ -444,7 +540,7 @@ async function renderNow() {
     const m = w.reduce((p, x) => p + x, 0) / 3;
     if (!best || m < best.m) best = { i, m };
   }
-  const when = (ts) => `${hhmm(ts)}${ts.slice(0, 10) === $("atDate").value ? "" : " tomorrow"}`;
+  const when = (ts) => `${hhmm(ts)}${ts.slice(0, 10) === at.slice(0, 10) ? "" : " tomorrow"}`;
   const hourAfter = (ts) => { const t = new Date(ts.replace(" ", "T") + ":00Z"); t.setUTCHours(t.getUTCHours() + 1); return t.toISOString().slice(0, 16).replace("T", " "); };
   $("cleanest").textContent = best ? `${when(d.next[best.i].ts)} to ${when(hourAfter(d.next[best.i + 2].ts))}, around ${Math.round(best.m)} µg/m³` : "Not enough forecast data";
   const start = f.findIndex((x) => x != null && x > s.limit);

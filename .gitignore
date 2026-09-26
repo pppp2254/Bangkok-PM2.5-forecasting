@@ -5,5 +5,15 @@ node_modules/
 __pycache__/
 .ipynb_checkpoints/
 *.zip
-data/
 dashboard/.claude/
+
+# keep the small results the dashboard and slides need; everything else in data/ is regenerated
+data/*
+!data/live/
+!data/clean/
+data/clean/*
+!data/clean/test_predictions.csv
+!data/clean/tft.pt
+!data/clean/hourly.csv
+!data/clean/lgb_fire.txt
+!data/clean/lgb_fire_features.json

@@ -7,6 +7,9 @@ const PREDS = `${DATA}clean/test_predictions.csv`;
 const FIRES = `${DATA}raw/firms/*.csv`;
 const BKK = { lat: 13.7563, lon: 100.5018 };
 const UNHEALTHY = 37.5;
+const ROOT = new URL("../", import.meta.url).pathname;
+const LIVE = `${DATA}live/forecast.json`;
+const PYTHON = process.env.PYTHON ?? `${ROOT}.venv/bin/python`;
 
 const db = await (await DuckDBInstance.create(":memory:")).connect();
 
@@ -164,6 +167,7 @@ new Elysia()
       const range = (f: number) => errors.find((e) => Number(e.bin) === Math.min(Math.floor(f / 25), 2));
       return {
         model,
+        at: query.at,
         current: current ?? null,
         wind: wind ?? null,
         next: next.map((r) => {
@@ -174,6 +178,84 @@ new Elysia()
     },
     { query: t.Object({ station: t.String(), at: t.String(), model: t.Optional(t.String()) }) },
   )
+
+  // live forecast in the same shape as /api/now: the latest one from ../live.py, or, with `at`,
+  // a forecast from any past hour (runs `live.py --at`, about 15 s, then cached in data/live/at/)
+  .get(
+    "/api/live",
+    async ({ query, set }) => {
+      let live;
+      if (query.at) {
+        if (!/^\d{4}-\d{2}-\d{2} \d{2}:00$/.test(query.at)) {
+          set.status = 400;
+          return { error: "at must look like 2025-03-15 07:00" };
+        }
+        const cached = Bun.file(`${DATA}live/at/${query.at.replace(/\D/g, "")}.json`);
+        if (await cached.exists()) live = await cached.json();
+        else {
+          if (!existsSync(PYTHON) || !existsSync(`${ROOT}.env`)) {
+            set.status = 503;
+            return { error: "This date has not been computed yet. Pick one from Saved forecasts, or set up .venv and .env (see README) to compute new dates." };
+          }
+          const proc = Bun.spawn([PYTHON, "live.py", "--at", query.at], { cwd: ROOT, stdout: "pipe", stderr: "pipe" });
+          const [code, out, err] = await Promise.all([proc.exited, new Response(proc.stdout).text(), new Response(proc.stderr).text()]);
+          if (code !== 0) {
+            set.status = 500;
+            return { error: err.trim().split("\n").slice(-3).join(" ") };
+          }
+          live = JSON.parse(out);
+          await Bun.write(cached, out);
+        }
+      } else {
+        const file = Bun.file(LIVE);
+        if (!(await file.exists())) {
+          set.status = 404;
+          return { error: "No live forecast yet. Press Refresh." };
+        }
+        live = await file.json();
+      }
+      const s = live.stations[query.station];
+      const errors = await rows(
+        `select least(floor("pred_lgb + fire" / 25), 2) as bin,
+                quantile_cont(y - "pred_lgb + fire", 0.1) as lo, quantile_cont(y - "pred_lgb + fire", 0.9) as hi
+         from preds where "pred_lgb + fire" is not null group by bin`,
+      );
+      const range = (f: number) => errors.find((e) => Number(e.bin) === Math.min(Math.floor(f / 25), 2));
+      return {
+        model: live.model,
+        generated_at: live.generated_at,
+        notes: live.notes ?? [],
+        at: s.at,
+        current: s.current,
+        wind: s.wind,
+        next: s.next.map((r: { ts: string; forecast: number; actual?: number | null }) => {
+          const e = range(r.forecast);
+          return { ...r, actual: r.actual ?? null, lo: e ? Math.max(0, r.forecast + Number(e.lo)) : null, hi: e ? r.forecast + Number(e.hi) : null };
+        }),
+      };
+    },
+    { query: t.Object({ station: t.String(), at: t.Optional(t.String()) }) },
+  )
+
+  // forecasts already computed and saved in data/live/at/ (committed, so they work without API keys)
+  .get("/api/live/saved", async () => {
+    const dir = `${DATA}live/at/`;
+    if (!existsSync(dir)) return [];
+    const names = [...new Bun.Glob("*.json").scanSync(dir)].sort();
+    return names.map((n) => `${n.slice(0, 4)}-${n.slice(4, 6)}-${n.slice(6, 8)} ${n.slice(8, 10)}:${n.slice(10, 12)}`);
+  })
+
+  // rerun ../live.py for the latest hour (about 15 s)
+  .post("/api/live/refresh", async ({ set }) => {
+    if (!existsSync(PYTHON) || !existsSync(`${ROOT}.env`)) {
+      set.status = 503;
+      return { ok: false, log: "Refreshing needs .venv and .env (see README). Showing the last saved forecast." };
+    }
+    const proc = Bun.spawn([PYTHON, "live.py"], { cwd: ROOT, stdout: "pipe", stderr: "pipe" });
+    const [code, out, err] = await Promise.all([proc.exited, new Response(proc.stdout).text(), new Response(proc.stderr).text()]);
+    if (code !== 0) set.status = 500;
+    return { ok: code === 0, log: (code === 0 ? out : err).trim().split("\n").slice(-5).join("\n") };
+  })
 
   // measured daily means for 2022 to 2024 (days with 18+ measured hours) and the hour-of-day pattern
   .get(
