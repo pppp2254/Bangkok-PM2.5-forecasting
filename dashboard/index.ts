@@ -4,7 +4,8 @@ import { existsSync } from "node:fs";
 
 const DATA = new URL("../data/", import.meta.url).pathname;
 const PREDS = `${DATA}clean/test_predictions.csv`;
-const FIRES = `${DATA}raw/firms/*.csv`;
+// compact copy committed to git (confident detections within 500 km); the raw FIRMS files work too
+const FIRES = existsSync(`${DATA}clean/fires_500km.csv`) ? `${DATA}clean/fires_500km.csv` : `${DATA}raw/firms/*.csv`;
 const BKK = { lat: 13.7563, lon: 100.5018 };
 const UNHEALTHY = 37.5;
 const ROOT = new URL("../", import.meta.url).pathname;
@@ -30,7 +31,7 @@ await db.run(`
 `);
 
 // Scanning 175 MB of FIRMS CSVs per request takes seconds, so keep only confident fires within 500 km, once.
-const HAS_FIRES = existsSync(`${DATA}raw/firms`);
+const HAS_FIRES = existsSync(`${DATA}clean/fires_500km.csv`) || existsSync(`${DATA}raw/firms`);
 if (HAS_FIRES)
   await db.run(`
     create table fires as
@@ -66,7 +67,7 @@ const SEASON: Record<string, string> = {
   rest: "month(ts) > 4",
 };
 
-new Elysia()
+export const app = new Elysia()
   .get("/", () => Bun.file(new URL("public/index.html", import.meta.url).pathname))
 
   .get("/api/meta", async () => ({
@@ -312,6 +313,7 @@ new Elysia()
       return { wind, fires };
     },
     { query: t.Object({ date: t.String() }) },
-  )
+  );
 
-  .listen(Number(process.env.PORT ?? 3200), ({ port }) => console.log(`dashboard on http://localhost:${port}`));
+// build-static.ts imports the app to call its routes; only start a server when run directly
+if (import.meta.main) app.listen(Number(process.env.PORT ?? 3200), ({ port }) => console.log(`dashboard on http://localhost:${port}`));

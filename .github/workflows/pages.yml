@@ -1,0 +1,64 @@
+name: Deploy dashboard to GitHub Pages
+
+# On every push, every 3 hours (fresh live forecast), or by hand from the Actions tab.
+on:
+  push:
+    branches: [master]
+  schedule:
+    - cron: "0 */3 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements.txt
+
+      - run: pip install pandas numpy lightgbm
+
+      # keys come from repository secrets (Settings > Secrets and variables > Actions); never from the repo
+      - name: Latest live forecast
+        env:
+          OPENAQ_API_KEY: ${{ secrets.OPENAQ_API_KEY }}
+          FIRMS_MAP_KEY: ${{ secrets.FIRMS_MAP_KEY }}
+        run: |
+          printf 'OPENAQ_API_KEY=%s\nFIRMS_MAP_KEY=%s\n' "$OPENAQ_API_KEY" "$FIRMS_MAP_KEY" > .env
+          python live.py || echo "::warning::Live forecast failed; the site keeps the forecast committed in data/live/"
+          rm .env
+
+      - uses: oven-sh/setup-bun@v2
+
+      - name: Build static site
+        working-directory: dashboard
+        run: |
+          bun install --frozen-lockfile
+          bun build-static.ts
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: dashboard/dist
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

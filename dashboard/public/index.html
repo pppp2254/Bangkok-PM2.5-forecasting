@@ -311,7 +311,26 @@ const COMPASS = ["north", "north-northeast", "northeast", "east-northeast", "eas
                  "south", "south-southwest", "southwest", "west-southwest", "west", "west-northwest", "northwest", "north-northwest"];
 
 const $ = (id) => document.getElementById(id);
-const get = (url) => fetch(url).then((r) => { if (!r.ok) throw new Error(url); return r.json(); });
+// on GitHub Pages (data-static="1") the page reads JSON files written by build-static.ts instead of the API
+const STATIC = document.documentElement.dataset.static === "1";
+const get = (url) => fetch(url).then(async (r) => {
+  if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error ?? (STATIC ? "Not available in the website version." : url));
+  return r.json();
+});
+const fileCache = {};
+const getFile = (path) => (fileCache[path] ??= get(path).catch((e) => { delete fileCache[path]; throw e; }));
+async function api(path, p = {}) {
+  if (!STATIC) return get(`/api/${path}?${new URLSearchParams(p)}`);
+  if (path === "now") return (await getFile(`api/now/${p.station}/${p.at.slice(0, 10)}.json`))[Number(p.at.slice(11, 13))];
+  if (path === "series") {
+    const end = new Date(`${p.to}T00:00:00Z`); end.setUTCDate(end.getUTCDate() + 1);
+    const stop = end.toISOString().slice(0, 10);
+    return (await getFile(`api/series/${p.station}.json`)).filter((r) => r.ts >= p.from && r.ts < stop);
+  }
+  const file = { meta: "meta", "live/saved": "saved", metrics: `metrics/${p.season}`, daily: `daily/${p.station ?? "all"}`,
+    history: `history/${p.station}`, fires: `fires/${p.date}`, live: `live/${p.station}${p.at ? `-${p.at.replace(/\D/g, "")}` : ""}` }[path];
+  return getFile(`api/${file}.json`);
+}
 const fmt = (x, d = 1) => (x == null ? "-" : Number(x).toFixed(d));
 const css = (v) => getComputedStyle(document.documentElement).getPropertyValue(v).trim();
 const label = (m) => LABELS[m] ?? m.replace(/^pred_/, "");
@@ -344,7 +363,8 @@ function draw(id, config) {
 
 /* setup */
 async function init() {
-  state.meta = await get("/api/meta");
+  state.meta = await api("meta");
+  if (STATIC) for (const id of ["liveDate", "liveHour", "refresh"]) $(id).closest("label, select, button").hidden = true;
   chartDefaults();
   $("station").innerHTML = state.meta.stations.map((s) => `<option value="${s}" ${s === "stou" ? "selected" : ""}>${STATION_NAMES[s] ?? s}</option>`).join("");
   $("atHour").innerHTML = Array.from({ length: 24 }, (_, h) => `<option value="${h}" ${h === 6 ? "selected" : ""}>${String(h).padStart(2, "0")}:00</option>`).join("");
@@ -460,7 +480,7 @@ function stepHour(d) {
 }
 
 async function loadSaved() {
-  const list = await get("/api/live/saved").catch(() => []);
+  const list = await api("live/saved").catch(() => []);
   $("saved").innerHTML = `<option value="">Saved forecasts (${list.length})</option>` + list.map((a) => `<option>${a}</option>`).join("");
   $("saved").value = list.includes(state.liveAt) ? state.liveAt : "";
 }
@@ -488,19 +508,18 @@ async function renderNow() {
   if (live) {
     const at = state.liveAt;
     if (at) $("liveInfo").textContent = `Fetching the data for ${at} and running the model, about 15 seconds...`;
-    const r = await fetch(`/api/live?station=${station}${at ? `&at=${encodeURIComponent(at)}` : ""}`);
-    if (!r.ok) { $("liveInfo").textContent = (await r.json().catch(() => ({}))).error ?? "No live forecast yet. Press Refresh."; return; }
+    try { d = await api("live", at ? { station, at } : { station }); }
+    catch (e) { $("liveInfo").textContent = e.message; return; }
     if (at !== state.liveAt) return; // a newer pick arrived while this one was loading
-    d = await r.json();
     const made = new Date(d.generated_at).toLocaleString("en-GB", { dateStyle: "medium", timeStyle: "short" });
-    $("liveInfo").textContent = (at ? `Forecast from ${d.at}, built from the data available then.` : `Latest reading ${d.at}. Forecast made ${made}.`)
+    $("liveInfo").textContent = (at ? `Forecast from ${d.at}, built from the data available then.` : `Latest reading ${d.at}. Forecast made ${made}${STATIC ? ", updated every 3 hours" : ""}.`)
       + (d.notes.length ? ` ${d.notes.join(" ")}` : "");
     if (at) loadSaved(); // a newly computed date is now saved too
     $("liveDate").value = d.at.slice(0, 10);
     $("liveHour").value = String(Number(d.at.slice(11, 13)));
   } else {
     const at = `${$("atDate").value} ${String($("atHour").value).padStart(2, "0")}:00`;
-    d = await get(`/api/now?station=${station}&at=${encodeURIComponent(at)}`);
+    d = await api("now", { station, at });
   }
   const at = d.at;
   const c = d.current ?? {};
@@ -591,7 +610,7 @@ async function renderNow() {
 
 /* accuracy */
 async function renderKpis() {
-  const [m, d] = await Promise.all([get("/api/metrics?season=all"), get("/api/daily")]);
+  const [m, d] = await Promise.all([api("metrics", { season: "all" }), api("daily")]);
   const honest = m.filter((r) => !r.model.includes("leaky"));
   const best = honest[0], persist = m.find((r) => r.model === "pred_persistence");
   const bestF1 = d.scores.filter((s) => !s.model.includes("leaky")).sort((a, b) => b.f1 - a.f1)[0];
@@ -605,8 +624,19 @@ async function renderKpis() {
 
 async function renderSeries() {
   const station = $("station").value, from = $("from").value, to = $("to").value;
-  $("export").href = `/api/export?station=${station}&from=${from}&to=${to}`;
-  const rows = await get(`/api/series?station=${station}&from=${from}&to=${to}`);
+  const rows = await api("series", { station, from, to });
+  if (!STATIC) $("export").href = `/api/export?station=${station}&from=${from}&to=${to}`;
+  else {
+    // no server on GitHub Pages, so build the same CSV in the browser
+    const cols = ["measured", ...state.meta.models];
+    const cell = (v) => (v == null ? "" : String(v).includes(",") ? `"${v}"` : String(v));
+    const csv = [["time", "station", ...cols].map(cell).join(","),
+      ...rows.filter((r) => r.y != null || state.meta.models.some((m) => r[m] != null))
+        .map((r) => [r.ts, station, r.y, ...state.meta.models.map((m) => r[m])].map(cell).join(","))].join("\n");
+    URL.revokeObjectURL($("export").href);
+    $("export").href = URL.createObjectURL(new Blob([csv], { type: "text/csv" }));
+    $("export").download = `pm25_${station}_${from}_${to}.csv`;
+  }
   const on = [...$("toggles").querySelectorAll("input:checked")].map((i) => i.value);
   draw("series", {
     type: "line",
@@ -622,7 +652,7 @@ async function renderSeries() {
 }
 
 async function renderMetrics(season) {
-  const m = await get(`/api/metrics?season=${season}`);
+  const m = await api("metrics", { season });
   const best = m.find((r) => !r.model.includes("leaky")).model;
   $("metrics").innerHTML = `<tr><th>Model</th><th class="num">MAE</th><th class="num">RMSE</th></tr>` +
     m.map((r) => `<tr class="${r.model === best ? "best" : ""}"><td>${label(r.model)}</td><td class="num">${fmt(r.mae, 2)}</td><td class="num">${fmt(r.rmse, 2)}</td></tr>`).join("");
@@ -639,7 +669,7 @@ async function renderMetrics(season) {
 
 async function renderDaily() {
   const station = $("station").value;
-  const d = await get(`/api/daily?station=${station}`);
+  const d = await api("daily", { station });
   const best = [...d.scores].filter((s) => !s.model.includes("leaky")).sort((a, b) => b.f1 - a.f1)[0].model;
   $("f1").innerHTML = `<tr><th>Model</th><th class="num">Precision</th><th class="num">Recall</th><th class="num">F1</th></tr>` +
     d.scores.map((s) => `<tr class="${s.model === best ? "best" : ""}"><td>${label(s.model)}</td><td class="num">${fmt(s.precision, 2)}</td><td class="num">${fmt(s.recall, 2)}</td><td class="num">${fmt(s.f1, 2)}</td></tr>`).join("");
@@ -658,7 +688,7 @@ async function renderDaily() {
 async function renderHistory() {
   const station = $("station").value;
   const key = `history:${station}`;
-  const h = state.cache[key] ?? (state.cache[key] = await get(`/api/history?station=${station}`));
+  const h = state.cache[key] ?? (state.cache[key] = await api("history", { station }));
   const s = std();
   const byDate = new Map(h.days.map((d) => [d.date, d.mean]));
   const size = 13, gap = 2, left = 40, top = 18;
@@ -716,7 +746,7 @@ async function renderFires() {
     setTiles();
   }
   setTimeout(() => state.map.invalidateSize(), 0); // the tab was hidden when the map was created
-  const { wind, fires } = await get(`/api/fires?date=${$("fireDate").value}`);
+  const { wind, fires } = await api("fires", { date: $("fireDate").value });
   state.fireLayer?.remove();
   state.fireLayer = L.layerGroup().addTo(state.map);
   L.circle([13.7563, 100.5018], { radius: 500000, color: css("--faint"), weight: 1, fill: false, dashArray: "4 4" }).addTo(state.fireLayer);

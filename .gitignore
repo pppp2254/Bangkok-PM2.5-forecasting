@@ -17,3 +17,5 @@ data/clean/*
 !data/clean/hourly.csv
 !data/clean/lgb_fire.txt
 !data/clean/lgb_fire_features.json
+!data/clean/fires_500km.csv
+dashboard/dist/

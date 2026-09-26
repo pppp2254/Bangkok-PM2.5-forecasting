@@ -81,6 +81,21 @@ The dashboard's Now tab opens in live mode: pick any date and hour, press Latest
 
 Computed forecasts are saved in `data/live/` and committed, so the dashboard shows them without API keys or Python: the latest forecast, plus 10 showcase dates in the "Saved forecasts" list (burning-season days from 2022 to 2026, including the 2025-01-24 haze). Picking a new date needs `.venv` and `.env`; each new date is saved too. To add more, run `live.py --at "..." > data/live/at/YYYYMMDDHHMM.json`. Needs `.env` with an OpenAQ key and the `.venv` from Setup. Known limit: the model rarely saw values below 6 µg/m³ in training, so on very clean days it reads a few µg/m³ high (forecasts stay around 9); the band and advice are unaffected.
 
+## Website (GitHub Pages)
+
+`.github/workflows/pages.yml` publishes a static copy of the dashboard: on every push to `master`, every 3 hours, or by hand (Actions tab, "Run workflow"). Each run makes a fresh live forecast with `live.py`, then `dashboard/build-static.ts` saves every answer the page needs as JSON in `dashboard/dist/` (about 118 MB, 5 to 25 minutes) and deploys it.
+
+The website shows the live forecast (updated every 3 hours), the saved forecasts, the 2024 backtest, accuracy, history and the fire map. Picking a new live date needs the local server.
+
+One-time setup on GitHub:
+1. Settings > Secrets and variables > Actions: add `OPENAQ_API_KEY` and `FIRMS_MAP_KEY`.
+2. Settings > Pages > Build and deployment > Source: GitHub Actions.
+3. Push, or run the workflow from the Actions tab. The site appears at `https://<user>.github.io/<repo>/`.
+
+Free GitHub Pages needs a public repository. The keys stay in secrets and are never written to the site.
+
+To test the static copy locally: `cd dashboard && bun build-static.ts && python3 -m http.server 3300 --directory dist`.
+
 ## Key rules (so results stay honest)
 
 - At forecast time *t* we predict *t*+24 h; every input must be known at or before *t*.
