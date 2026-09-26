@@ -86,10 +86,13 @@ Needs `data/clean/` (and `data/raw/firms/` for the fire map). Details in `dashbo
 
 Member
 1. 6710503780 จักรภัทร ชัยดิลกลาภ
+
 explore.ipynb, report and edit the video
 2. 6710504077 ปัญญวัฒน์ เชื้อวัชรินทร์
+
 Bun + Elysia API with DuckDB reading the CSVs directly. Pages: station and date picker, results table, ablation chart, unhealthy-day view, map of fires upwind of Bangkok.
 3. 6710504310 รัชพล สนิทวงษ์
+
 tft.ipynb on Colab GPU, download the updated test_predictions.csv and tft_variable_importance.png.write the TFT slides and the Colab demo
 
 
